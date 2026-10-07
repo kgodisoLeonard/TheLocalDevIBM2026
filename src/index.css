@@ -1,4 +1,22 @@
 :root {
+  font-family: 'Avenir Next', 'Century Gothic', 'Trebuchet MS', sans-serif;
+  color: #182417;
+  background: #e5f2e5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  --page-background: #e5f2e5;
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; min-height: 100%; }
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+button { font-family: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #198d50; outline-offset: 2px; }
+::selection { background: #bce7c4; color: #143d25; }:root {
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;

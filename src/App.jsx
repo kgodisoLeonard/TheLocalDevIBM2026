@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import './App.css';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 const displayDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date());
 
 const navigation = [
@@ -52,6 +52,10 @@ export default function HydroLinkApp() {
   const [dashboardData, setDashboardData] = useState([]);
   const [selectedStationId, setSelectedStationId] = useState('');
   const [stationReading, setStationReading] = useState(null);
+  const [aiSummary, setAiSummary] = useState('');
+  const [summaryStationId, setSummaryStationId] = useState('');
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState(false);
   const [alertsData, setAlertsData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -110,6 +114,31 @@ export default function HydroLinkApp() {
   }, [dashboardData, searchQuery]);
   const selectedPage = navigation.find((item) => item.id === activeTab)?.label || 'Overview';
   const reviewAlerts = alertsData.filter((alert) => alert.status?.toLowerCase() !== 'normal');
+
+  async function handleSummarizeWithAI() {
+    if (!stationReading || isSummarizing) return;
+    const requestStationId = selectedStationId;
+    setAiSummary('');
+    setSummaryStationId(requestStationId);
+    setSummaryError(false);
+    setIsSummarizing(true);
+    try {
+      const response = await fetch(`${API_BASE}/summarize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stationReading),
+      });
+      if (!response.ok) throw new Error('Summary request failed.');
+      const data = await response.json();
+      if (typeof data.summary !== 'string') throw new Error('Summary response was invalid.');
+      setAiSummary(data.summary);
+    } catch {
+      setAiSummary('Failed to generate AI summary.');
+      setSummaryError(true);
+    } finally {
+      setIsSummarizing(false);
+    }
+  }
 
   async function handleFeedbackSubmit(event) {
     event.preventDefault();
@@ -217,7 +246,7 @@ export default function HydroLinkApp() {
               <article className="panel secondary-main"><div className="panel-heading"><div><span className="eyebrow">{selectedStation?.catchment || 'HydroLink network'}</span><h2>{activeTab === 'network' ? 'Catchment network' : activeTab === 'forecast' ? 'River forecast' : activeTab === 'quality' ? 'Water integrity' : activeTab === 'insights' ? 'AI trust insights' : activeTab === 'devices' ? 'Connected devices' : 'Station monitoring'}</h2><p>Live readings and confidence metrics from connected stations.</p></div><Gauge className="ledger-heading-icon" size={23} /></div>
                 {activeTab === 'network' && <div className="network-visual"><div className="network-river" /><span className="map-label">Limpopo catchment</span>{dashboardData.map((station, index) => <button key={station.station_id} className={`map-node node-${index}`} onClick={() => setSelectedStationId(station.station_id)}><span /><strong>{station.station_id}</strong><small>{station.current_value} m</small></button>)}</div>}
                 {activeTab === 'forecast' && <div className="forecast-focus"><span className="forecast-value">{stationReading?.forecast?.predicted_level ?? '--'}<small> m</small></span><span className="forecast-label">Predicted level · next 24 hours</span><div className="forecast-chart"><svg viewBox="0 0 600 120" preserveAspectRatio="none"><path d="M0 84 C80 79 95 65 160 72 S250 47 315 57 S420 36 480 43 S550 18 600 25" /><path className="chart-baseline" d="M0 104 H600" /></svg></div><p>Confidence interval: {stationReading?.forecast?.confidence_interval || 'pending'} · Current baseline: {stationReading?.expected_range || 'pending'}</p></div>}
-                {(activeTab === 'insights' || activeTab === 'quality') && <div className="insight-copy"><div className="insight-score"><span>{stationReading?.trust_score ?? '--'}<small>/100</small></span><div><strong>{activeTab === 'quality' ? 'Measurement integrity' : 'Station trust score'}</strong><p>{stationReading?.anomalies_flagged || 'No anomaly details are currently available.'}</p></div></div><div className="insight-facts"><div><span>Observed level</span><strong>{stationReading?.current_value ?? '--'} m</strong></div><div><span>Expected range</span><strong>{stationReading?.expected_range || '--'}</strong></div><div><span>Station condition</span><StatusPill status={stationReading?.status} /></div></div></div>}
+                {(activeTab === 'insights' || activeTab === 'quality') && <div className="insight-copy"><div className="insight-score"><span>{stationReading?.trust_score ?? '--'}<small>/100</small></span><div><strong>{activeTab === 'quality' ? 'Measurement integrity' : 'Station trust score'}</strong><p>{stationReading?.anomalies_flagged || 'No anomaly details are currently available.'}</p></div></div><div className="insight-facts"><div><span>Observed level</span><strong>{stationReading?.current_value ?? '--'} m</strong></div><div><span>Expected range</span><strong>{stationReading?.expected_range || '--'}</strong></div><div><span>Station condition</span><StatusPill status={stationReading?.status} /></div></div>{activeTab === 'insights' && <section className="ai-summary-tool"><button className="ai-summary-button" type="button" onClick={handleSummarizeWithAI} disabled={!stationReading || isSummarizing}><Sparkles size={15} className={isSummarizing ? 'summary-spinner' : ''} /><span>{isSummarizing ? 'Synthesizing AI summary...' : 'Summarize Station with AI'}</span></button>{summaryStationId === selectedStationId && aiSummary && <div className={`ai-summary-output ${summaryError ? 'summary-error' : ''}`} aria-live="polite"><Sparkles size={15} /><p>{aiSummary}</p></div>}</section>}</div>}
                 {(activeTab === 'monitoring' || activeTab === 'devices') && <div className="station-table">{filteredStations.map((station) => <button className={`station-table-row ${station.station_id === selectedStationId ? 'selected' : ''}`} key={station.station_id} onClick={() => setSelectedStationId(station.station_id)}><span><span className={`mini-status ${station.status === 'healthy' ? '' : 'review'}`} /><span><strong>{station.name}</strong><small>{station.station_id} · {station.catchment}</small></span></span><span>{station.current_value} m</span><span>{station.trust_score}% trust</span><StatusPill status={station.status} /><ChevronRight size={15} /></button>)}</div>}
               </article>
               <aside className="panel station-picker"><div className="panel-heading"><div><h2>Stations</h2><p>Select a live node</p></div></div>{filteredStations.map((station) => <button key={station.station_id} className={`picker-row ${station.station_id === selectedStationId ? 'selected' : ''}`} onClick={() => setSelectedStationId(station.station_id)}><span className={`mini-status ${station.status === 'healthy' ? '' : 'review'}`} /><span><strong>{station.name}</strong><small>{station.station_id}</small></span><ChevronRight size={14} /></button>)}</aside>

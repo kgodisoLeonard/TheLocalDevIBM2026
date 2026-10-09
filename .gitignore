@@ -25,3 +25,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python environments and caches
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Reproducible ML run outputs (keep directory documentation tracked)
+data/processed/*.csv
+data/synthetic/*.csv

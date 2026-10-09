@@ -83,19 +83,65 @@ Run these from the project root:
 ```powershell
 npm run build
 npm run lint
-```# React + Vite
+```
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Machine-Learning Workflow
 
-Currently, two official plugins are available:
+FastAPI does not train models during startup. Training, threshold tuning, held-out
+evaluation and artifact creation are explicit offline operations.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+From the project root:
 
-## React Compiler
+```powershell
+Set-Location .\hydropolink-backend
+& .\.venv\Scripts\python.exe -m hydrolink_ml train
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+With no `--input`, this creates a reproducible, clearly labelled synthetic development
+dataset. It writes chronological data splits under `data/`, validated artifacts under
+`hydropolink-backend/artifacts/current/`, and actual executed metrics under `reports/`.
+These development metrics are not DWS or SAWS operational results.
 
-## Expanding the Oxlint configuration
+To train on an authentic historical export, first standardise its explicit columns:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```powershell
+& .\.venv\Scripts\python.exe -m hydrolink_ml ingest `
+  ..\data\raw\SOURCE.csv ..\data\processed\canonical-authentic.csv `
+  --source "Source organisation, URL, retrieval date and licence" `
+  --station-column Station --timestamp-column DateTime --value-column StageMetres
+
+& .\.venv\Scripts\python.exe -m hydrolink_ml train `
+  --input ..\data\processed\canonical-authentic.csv
+```
+
+The canonical value must be water level in metres; unit conversion is never guessed.
+The importer preserves missing observations and provenance and rejects invalid
+timestamps. DWS verified downloads are query-limited, while SAWS archived rainfall may
+require an authorised data request under the SAWS data policy.
+
+Re-run evaluation or a single prediction with:
+
+```powershell
+& .\.venv\Scripts\python.exe -m hydrolink_ml evaluate
+& .\.venv\Scripts\python.exe -m hydrolink_ml predict C1H019 0.91 `
+  --timestamp 2026-10-09T12:00:00+00:00
+```
+
+Start the backend after training:
+
+```powershell
+$env:HYDROLINK_MODEL_DIR = (Resolve-Path .\artifacts\current)
+& .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+`GET /api/model-info` discloses artifact version, data mode, sources, coverage and
+held-out metrics. Missing, incompatible or discontinuous context produces an explicit
+unavailable forecast instead of a fabricated prediction. No authoritative flood
+thresholds are bundled, so automatic public flood warnings remain disabled until a
+responsible authority supplies station-specific thresholds.
+
+Run the tests with:
+
+```powershell
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```

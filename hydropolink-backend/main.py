@@ -1,53 +1,82 @@
+"""HydroLink SA FastAPI application backed by offline model artifacts."""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
-import requests
-from bs4 import BeautifulSoup
-import numpy as np
-from sklearn.ensemble import IsolationForest
-import hashlib
-from datetime import datetime
+
+from hydrolink_ml.config import ARTIFACT_ROOT
+from hydrolink_ml.inference import HydroLinkInferenceService
+from scraper import fetch_live_dws_stations
+
+
+LOGGER = logging.getLogger(__name__)
+MODEL_DIRECTORY = Path(os.getenv("HYDROLINK_MODEL_DIR", str(ARTIFACT_ROOT / "current")))
+INFERENCE = HydroLinkInferenceService(MODEL_DIRECTORY)
 
 app = FastAPI(
-    title="HydroLink SA Real AI Engine",
-    description="FastAPI backend powered by real Isolation Forest machine learning and IBM Z auditing.",
-    version="3.1.1"
+    title="HydroLink SA Hydrological Trust Engine",
+    description="Validated anomaly detection, forecasting, uncertainty and explainable Trust Scores.",
+    version="4.0.0",
 )
 
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("HYDROLINK_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
-# --- Real AI Model Initialization (Scikit-Learn Isolation Forest) ---
-ml_model = IsolationForest(contamination=0.15, random_state=42)
-
-historical_baseline_data = np.array([
-    [0.85, 12.0], [0.82, 11.5], [0.88, 13.0], [0.80, 11.0],
-    [4.20, 45.0], [4.15, 44.2], [4.25, 46.1], [4.18, 44.8],
-    [2.10, 18.0], [2.15, 18.5], [2.08, 17.8]
-])
-ml_model.fit(historical_baseline_data)
 
 class ForecastModel(BaseModel):
-    predicted_level: float
+    predicted_level: float | None
     confidence_interval: str
+    lower_bound: float | None = None
+    upper_bound: float | None = None
+    coverage_target: float | None = None
+    horizon_hours: int | None = None
+    algorithm: str | None = None
+    model_available: bool = False
+    unavailable_reason: str | None = None
+
 
 class StationTelemetry(BaseModel):
     station_id: str
     name: str
     catchment: str
+    timestamp: str
+    source: str
     trust_score: int = Field(..., ge=0, le=100)
-    current_value: float
+    trust_components: dict[str, Any]
+    trust_explanation: str
+    current_value: float | None
     expected_range: str
     status: str
     forecast: ForecastModel
+    anomaly: bool
+    anomaly_reasons: list[str]
     anomalies_flagged: str
+    isolation_score: float | None
+    model_scope: str
+    model_info: dict[str, Any]
+    alert: dict[str, Any]
     audit_hash: str
+
 
 class AlertItem(BaseModel):
     station_id: str
@@ -55,139 +84,156 @@ class AlertItem(BaseModel):
     message: str
     trust_score: int
     status: str
+    risk_level: str
+    reason: str
+    requires_human_review: bool
+
 
 class SummaryPayload(BaseModel):
     station_id: str
     name: str
     trust_score: int
-    current_value: float
+    current_value: float | None
     status: str
+    anomaly_reasons: list[str] = Field(default_factory=list)
 
-def generate_ibm_z_audit(station_id: str, value: float, trust: int) -> str:
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S SAST")
+
+def generate_local_audit_digest(station_id: str, timestamp: str, value: float | None, trust: int) -> str:
+    """Create a local integrity digest; this is not IBM Z persistence."""
     raw = f"{timestamp}|{station_id}|{value}|{trust}"
-    h = hashlib.sha256(raw.encode()).hexdigest()
-    return f"0x{h[:10]}...{h[-4:]} (IBM Z Secure Log)"
+    return f"sha256:{hashlib.sha256(raw.encode()).hexdigest()}"
 
-def analyze_station_with_ai(station_id: str, name: str, stage_val: float) -> Dict[str, Any]:
-    feature_vector = np.array([[stage_val, stage_val * 12.5]])
-    
-    prediction = ml_model.predict(feature_vector)[0]
-    decision_score = ml_model.decision_function(feature_vector)[0]
-    
-    normalized_trust = int(np.clip((decision_score + 0.25) / 0.50 * 100, 15, 99))
-    
-    if prediction == 1 and normalized_trust >= 70:
-        status = "healthy"
-        audit_msg = f"Isolation Forest Inlier. Anomaly score: {round(decision_score, 3)}. Sensor data verified normal."
-    else:
-        status = "review_required"
-        normalized_trust = min(normalized_trust, 45)
-        audit_msg = f"Anomaly Triggered (Isolation Forest Outlier). Score: {round(decision_score, 3)}. Trust-gated alert applied."
 
-    audit_hash = generate_ibm_z_audit(station_id, stage_val, normalized_trust)
-
-    return {
-        "station_id": station_id,
-        "name": name,
-        "catchment": f"Basin Zone {station_id[:1]}",
-        "trust_score": normalized_trust,
-        "current_value": stage_val,
-        "expected_range": f"{round(stage_val * 0.92, 2)}m - {round(stage_val * 1.08, 2)}m",
-        "status": status,
-        "forecast": {
-            "predicted_level": round(stage_val * 1.03, 2),
-            "confidence_interval": "± 0.12m"
+def _fallback_stations() -> list[dict[str, Any]]:
+    now = datetime.now(timezone.utc).isoformat()
+    return [
+        {
+            "station_id": "C1H019",
+            "name": "Grootdraai Dam Outflow (development fallback)",
+            "timestamp": now,
+            "current_value": 0.843,
+            "source": "synthetic_fallback_not_dws",
         },
-        "anomalies_flagged": audit_msg,
-        "audit_hash": audit_hash
-    }
+        {
+            "station_id": "LMP-CR-04",
+            "name": "Crocodile River Development Station",
+            "timestamp": now,
+            "current_value": 2.31,
+            "source": "synthetic_fallback_not_dws",
+        },
+    ]
 
-def scrape_live_dws() -> List[Dict[str, Any]]:
-    url = "https://www.dws.gov.za/Hydrology/Unverified"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    stations = []
-    
+
+def _raw_stations() -> list[dict[str, Any]]:
     try:
-        response = requests.get(url, headers=headers, timeout=8)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            rows = soup.find_all('tr')
-            for row in rows:
-                cols = row.find_all('td')
-                if len(cols) >= 4:
-                    s_code = cols[0].text.strip()
-                    p_name = cols[1].text.strip()
-                    raw_stg = cols[3].text.strip()
-                    if len(s_code) >= 5 and raw_stg.replace('.', '', 1).isdigit():
-                        val = float(raw_stg)
-                        analyzed_node = analyze_station_with_ai(s_code, p_name, val)
-                        stations.append(analyzed_node)
-    except Exception as e:
-        print(f"Scraper error: {e}")
-        
-    if not stations:
-        stations.append(analyze_station_with_ai("C1H019", "Grootdraai Dam Outflow", 0.843))
-        stations.append(analyze_station_with_ai("LMP-CR-04", "Crocodile River Main Station", 6.100))
-        
-    return stations
+        return fetch_live_dws_stations()
+    except (requests.RequestException, ValueError) as exc:
+        LOGGER.warning("Using labelled development fallback because DWS is unavailable: %s", exc)
+        return _fallback_stations()
 
-@app.get("/api/dashboard", response_model=List[StationTelemetry])
-def get_dashboard():
-    return scrape_live_dws()
+
+def _analyse(raw: dict[str, Any]) -> dict[str, Any]:
+    result = INFERENCE.analyze(
+        station_id=str(raw["station_id"]),
+        name=str(raw.get("name") or raw["station_id"]),
+        value_m=raw.get("current_value"),
+        timestamp=str(raw["timestamp"]),
+        received_at=datetime.now(timezone.utc),
+        source=str(raw.get("source") or "unknown"),
+        as_of=datetime.now(timezone.utc),
+    )
+    result["audit_hash"] = generate_local_audit_digest(
+        result["station_id"], result["timestamp"], result["current_value"], result["trust_score"]
+    )
+    return result
+
+
+def get_analyzed_stations() -> list[dict[str, Any]]:
+    return [_analyse(raw) for raw in _raw_stations()]
+
+
+@app.get("/api/health")
+def get_health() -> dict[str, object]:
+    return {"status": "ok", "model_available": INFERENCE.available, "model_directory": str(MODEL_DIRECTORY)}
+
+
+@app.get("/api/model-info")
+def get_model_info() -> dict[str, object]:
+    return INFERENCE.model_information()
+
+
+@app.get("/api/dashboard", response_model=list[StationTelemetry])
+def get_dashboard() -> list[dict[str, Any]]:
+    return get_analyzed_stations()
+
 
 @app.get("/api/readings", response_model=StationTelemetry)
-def get_readings(station_id: str):
-    stations = scrape_live_dws()
-    match = next((s for s in stations if s["station_id"].lower() == station_id.lower()), None)
-    if not match:
-        raise HTTPException(status_code=404, detail="Station not found")
+def get_readings(station_id: str) -> dict[str, Any]:
+    stations = get_analyzed_stations()
+    match = next((station for station in stations if station["station_id"].lower() == station_id.lower()), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Station not found in the current feed")
     return match
 
-@app.get("/api/alerts", response_model=List[AlertItem])
-def get_alerts():
-    stations = scrape_live_dws()
-    alerts = []
-    for st in stations[:4]:
-        lang = "Sepedi" if "A" <= st["station_id"][:1] <= "M" else "isiZulu"
-        msg = f"Boemo bja meeti a {st['name']} bo hlahlobilwe ke AI. Tekano: {st['current_value']}m." if lang == "Sepedi" else f"Amanziasezingeni lase-{st['name']} ahlolwe yi-AI ku {st['current_value']}m."
-        alerts.append({
-            "station_id": st["station_id"],
-            "language": lang,
-            "message": msg,
-            "trust_score": st["trust_score"],
-            "status": "Normal" if st["status"] == "healthy" else "Review Required"
-        })
+
+def _alert_message(station: dict[str, Any], language: str) -> str:
+    risk = station["alert"]["risk_level"]
+    value = station["current_value"]
+    if language == "Sepedi":
+        return f"Boemo bja meetse kua {station['name']} ke {value}m. Maemo: {risk}."
+    return f"Izinga lamanzi e-{station['name']} lingu-{value}m. Isimo: {risk}."
+
+
+@app.get("/api/alerts", response_model=list[AlertItem])
+def get_alerts() -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for station in get_analyzed_stations()[:4]:
+        language = "Sepedi" if "A" <= station["station_id"][:1] <= "M" else "isiZulu"
+        decision = station["alert"]
+        alerts.append(
+            {
+                "station_id": station["station_id"],
+                "language": language,
+                "message": _alert_message(station, language),
+                "trust_score": station["trust_score"],
+                "status": "Review Required" if decision["requires_human_review"] else "Normal",
+                "risk_level": decision["risk_level"],
+                "reason": decision["reason"],
+                "requires_human_review": decision["requires_human_review"],
+            }
+        )
     return alerts
 
+
 @app.post("/api/summarize")
-def generate_ai_summary(payload: SummaryPayload):
+def generate_summary(payload: SummaryPayload) -> dict[str, str]:
+    """Return a deterministic evidence summary; no language-model claim is made."""
     if payload.status == "healthy" and payload.trust_score >= 70:
-        summary_text = (
-            f"AI Executive Summary: Station {payload.station_id} ({payload.name}) is operating normally. "
-            f"The current stage height of {payload.current_value}m aligns closely with historical baselines. "
-            f"The Isolation Forest model verified this stream with a high trust score of {payload.trust_score}%. No flood risks detected."
+        summary = (
+            f"Station {payload.station_id} ({payload.name}) has a Trust Score of {payload.trust_score}/100. "
+            f"The current stage is {payload.current_value} m and no configured quality anomaly is active."
         )
     else:
-        summary_text = (
-            f"AI Alert Summary: Station {payload.station_id} ({payload.name}) has triggered an anomaly flag. "
-            f"Observed telemetry shows an outlier reading of {payload.current_value}m, resulting in a restricted trust score of {payload.trust_score}%. "
-            f"Trust-gated protocols have engaged to prevent automated panic alerts pending manual verification."
+        reasons = ", ".join(payload.anomaly_reasons) or "insufficient trusted evidence"
+        summary = (
+            f"Station {payload.station_id} ({payload.name}) requires review. Trust Score: {payload.trust_score}/100; "
+            f"current stage: {payload.current_value} m; evidence: {reasons}."
         )
-    return {"summary": summary_text}
+    return {"summary": summary, "generation_method": "deterministic_template"}
+
 
 @app.post("/api/feedback")
-def post_feedback(payload: dict):
-    station_id = payload.get("station_id", "UNKNOWN")
-    report = payload.get("report", "")
-    lang = payload.get("lang", "Sepedi")
-    
+def post_feedback(payload: dict[str, Any]) -> dict[str, Any]:
+    station_id = str(payload.get("station_id") or "UNKNOWN")
+    report = str(payload.get("report") or "").strip()
+    language = str(payload.get("lang") or "Sepedi")
+    if not report:
+        raise HTTPException(status_code=422, detail="report is required")
     return {
-        "id": 303,
-        "farmer": "Verified Regional Smallholder",
+        "id": generate_local_audit_digest(station_id, datetime.now(timezone.utc).isoformat(), None, 0)[7:19],
         "location": station_id,
         "report": report,
-        "lang": lang,
-        "impact": "+8 AI Trust Boost Applied (Multi-Source Consensus)",
-        "message": "Community WhatsApp report successfully verified and merged into the Isolation Forest inference pipeline."
+        "lang": language,
+        "impact": "Pending independent verification; no Trust Score change has been applied.",
+        "message": "Community report received for human review. It has not been merged into a model.",
     }

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import './App.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://148.100.109.75:8000/api';
 const displayDate = new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date());
 
 const navigation = [
@@ -20,12 +20,12 @@ const navigation = [
   { id: 'reports', label: 'Reports', icon: FileText },
 ];
 
-function MetricCard({ label, value, unit, note, trend, direction = 'up', accent = 'green' }) {
+function MetricCard({ label, value, unit, note, trend, direction = 'up', accent = 'green', onClick }) {
   const TrendIcon = direction === 'down' ? ArrowDownRight : ArrowUpRight;
   return (
     <article className={`metric-card metric-${accent}`}>
       <div className="metric-copy">
-        <div className="metric-label">{label}<span className="metric-link"><ArrowUpRight size={12} /></span></div>
+        <div className="metric-label">{label}<button className="metric-link" type="button" aria-label={`View ${label}`} onClick={onClick}><ArrowUpRight size={12} /></button></div>
         <div className="metric-value">{value}<span>{unit}</span></div>
         <div className={`metric-note ${trend ? `trend-${direction}` : ''}`}>
           {trend && <TrendIcon size={12} strokeWidth={2.4} />}{note}
@@ -65,6 +65,19 @@ export default function HydroLinkApp() {
   const [searchQuery, setSearchQuery] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [systemInfo, setSystemInfo] = useState(null);
+
+  useEffect(() => {
+    async function fetchSystemInfo() {
+      try {
+        const response = await fetch(`${API_BASE}/system`);
+        if (response.ok) setSystemInfo(await response.json());
+      } catch {
+        setSystemInfo(null);
+      }
+    }
+    fetchSystemInfo();
+  }, []);
 
   useEffect(() => {
     async function fetchAppData() {
@@ -92,14 +105,21 @@ export default function HydroLinkApp() {
     if (!selectedStationId) return;
     async function fetchStationDetails() {
       try {
+        setStationReading(null);
         const response = await fetch(`${API_BASE}/readings?station_id=${encodeURIComponent(selectedStationId)}`);
         if (!response.ok) throw new Error('Station details are unavailable.');
-        setStationReading(await response.json());
+        const reading = await response.json();
+        if (isCurrent) setStationReading(reading);
       } catch (error) {
-        console.error(error);
+        if (isCurrent) {
+          console.error(error);
+          setStationReading(null);
+        }
       }
     }
+    let isCurrent = true;
     fetchStationDetails();
+    return () => { isCurrent = false; };
   }, [selectedStationId]);
 
   const selectedStation = dashboardData.find((station) => station.station_id === selectedStationId);
@@ -112,7 +132,7 @@ export default function HydroLinkApp() {
     if (!query) return dashboardData;
     return dashboardData.filter((station) => `${station.name} ${station.station_id} ${station.catchment}`.toLowerCase().includes(query));
   }, [dashboardData, searchQuery]);
-  const selectedPage = navigation.find((item) => item.id === activeTab)?.label || 'Overview';
+  const selectedPage = navigation.find((item) => item.id === activeTab)?.label || (activeTab === 'ledger' ? 'Trust Ledger' : 'Overview');
   const reviewAlerts = alertsData.filter((alert) => alert.status?.toLowerCase() !== 'normal');
 
   async function handleSummarizeWithAI() {
@@ -188,8 +208,13 @@ export default function HydroLinkApp() {
           <button className="mobile-menu icon-button" aria-label="Toggle navigation" onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen ? <X size={19} /> : <Menu size={19} />}</button>
           <div className="page-heading"><span className="heading-icon"><LayoutDashboard size={19} /></span><h1>{selectedPage}</h1></div>
           <div className="topbar-tools">
-            <label className="search-box"><span className="sr-only">Search stations</span><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search stations..." /><Search size={17} /></label>
-            <div className="date-chip"><CalendarDays size={15} /><span>{displayDate}</span><ChevronDown size={13} /></div>
+            {systemInfo && <div className="system-badge" title={`IBM LinuxONE [${systemInfo.architecture || 'unknown'}] | AI: ${systemInfo.model_source || 'unknown'}`}><Cpu size={13} /><span>IBM LinuxONE [{systemInfo.architecture || 'unknown'}] · AI: {systemInfo.model_source || 'unknown'}</span></div>}
+            <form className="search-box" role="search" onSubmit={(event) => { event.preventDefault(); selectTab('monitoring'); }}>
+              <label className="sr-only" htmlFor="station-search">Search stations</label>
+              <input id="station-search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search stations..." />
+              <button type="submit" aria-label="Search stations"><Search size={17} /></button>
+            </form>
+            <div className="date-chip"><CalendarDays size={15} /><span>{displayDate}</span></div>
             <div className="notification-wrap">
               <button className={`icon-button notification-button ${notificationsOpen ? 'pressed' : ''}`} aria-label="Notifications" onClick={() => setNotificationsOpen((open) => !open)}><Bell size={17} />{reviewAlerts.length > 0 && <span className="notification-dot" />}</button>
               {notificationsOpen && <div className="notification-popover"><strong>Recent alerts</strong>{alertsData.length ? alertsData.slice(0, 3).map((alert, index) => <div className="popover-alert" key={`${alert.station_id}-${index}`}><span className="alert-dot" /><span>{alert.message}</span></div>) : <p>No new alerts.</p>}<button onClick={() => selectTab('reports')}>Open reports <ArrowUpRight size={13} /></button></div>}
@@ -199,13 +224,13 @@ export default function HydroLinkApp() {
         </header>
 
         <div className="page-content">
-          {errorMsg && <div className="error-banner"><CircleAlert size={16} /><span>{errorMsg}</span><span className="error-hint">Check the API at localhost:8000</span></div>}
+          {errorMsg && <div className="error-banner"><CircleAlert size={16} /><span>{errorMsg}</span><span className="error-hint">Check the API at 148.100.109.75:8000</span></div>}
           {isLoading ? <div className="loading-state"><span className="loading-ring" /><p>Loading station telemetry</p></div> : activeTab === 'overview' ? (
             <>
               <section className="metric-grid" aria-label="Operations summary">
-                <MetricCard label="River level" value={stationReading?.current_value ?? '--'} unit="m" note={stationReading?.expected_range ? `Expected ${stationReading.expected_range}` : 'Awaiting station data'} trend={stationReading?.status === 'healthy' ? 'Within expected range' : null} />
-                <MetricCard label="Average trust score" value={averageTrust || '--'} unit="%" note={`${healthyStations} of ${dashboardData.length} stations healthy`} trend="Validated telemetry" accent="coral" direction="down" />
-                <MetricCard label="Stations reporting" value={dashboardData.length.toString().padStart(2, '0')} unit="" note={`${reviewAlerts.length} alerts need review`} trend="Live network status" />
+                <MetricCard label="River level" value={stationReading?.current_value ?? '--'} unit="m" note={stationReading?.expected_range ? `Expected ${stationReading.expected_range}` : 'Awaiting station data'} trend={stationReading?.status === 'healthy' ? 'Within expected range' : null} onClick={() => selectTab('monitoring')} />
+                <MetricCard label="Average trust score" value={averageTrust || '--'} unit="%" note={`${healthyStations} of ${dashboardData.length} stations healthy`} trend="Validated telemetry" accent="coral" direction="down" onClick={() => selectTab('insights')} />
+                <MetricCard label="Stations reporting" value={dashboardData.length.toString().padStart(2, '0')} unit="" note={`${reviewAlerts.length} alerts need review`} trend="Live network status" onClick={() => selectTab('monitoring')} />
               </section>
 
               <section className="overview-grid">
@@ -247,12 +272,12 @@ export default function HydroLinkApp() {
                 {activeTab === 'network' && <div className="network-visual"><div className="network-river" /><span className="map-label">Limpopo catchment</span>{dashboardData.map((station, index) => <button key={station.station_id} className={`map-node node-${index}`} onClick={() => setSelectedStationId(station.station_id)}><span /><strong>{station.station_id}</strong><small>{station.current_value} m</small></button>)}</div>}
                 {activeTab === 'forecast' && <div className="forecast-focus"><span className="forecast-value">{stationReading?.forecast?.predicted_level ?? '--'}<small> m</small></span><span className="forecast-label">Predicted level · next 24 hours</span><div className="forecast-chart"><svg viewBox="0 0 600 120" preserveAspectRatio="none"><path d="M0 84 C80 79 95 65 160 72 S250 47 315 57 S420 36 480 43 S550 18 600 25" /><path className="chart-baseline" d="M0 104 H600" /></svg></div><p>Confidence interval: {stationReading?.forecast?.confidence_interval || 'pending'} · Current baseline: {stationReading?.expected_range || 'pending'}</p></div>}
                 {(activeTab === 'insights' || activeTab === 'quality') && <div className="insight-copy"><div className="insight-score"><span>{stationReading?.trust_score ?? '--'}<small>/100</small></span><div><strong>{activeTab === 'quality' ? 'Measurement integrity' : 'Station trust score'}</strong><p>{stationReading?.anomalies_flagged || 'No anomaly details are currently available.'}</p></div></div><div className="insight-facts"><div><span>Observed level</span><strong>{stationReading?.current_value ?? '--'} m</strong></div><div><span>Expected range</span><strong>{stationReading?.expected_range || '--'}</strong></div><div><span>Station condition</span><StatusPill status={stationReading?.status} /></div></div>{activeTab === 'insights' && <section className="ai-summary-tool"><button className="ai-summary-button" type="button" onClick={handleSummarizeWithAI} disabled={!stationReading || isSummarizing}><Sparkles size={15} className={isSummarizing ? 'summary-spinner' : ''} /><span>{isSummarizing ? 'Synthesizing AI summary...' : 'Summarize Station with AI'}</span></button>{summaryStationId === selectedStationId && aiSummary && <div className={`ai-summary-output ${summaryError ? 'summary-error' : ''}`} aria-live="polite"><Sparkles size={15} /><p>{aiSummary}</p></div>}</section>}</div>}
-                {(activeTab === 'monitoring' || activeTab === 'devices') && <div className="station-table">{filteredStations.map((station) => <button className={`station-table-row ${station.station_id === selectedStationId ? 'selected' : ''}`} key={station.station_id} onClick={() => setSelectedStationId(station.station_id)}><span><span className={`mini-status ${station.status === 'healthy' ? '' : 'review'}`} /><span><strong>{station.name}</strong><small>{station.station_id} · {station.catchment}</small></span></span><span>{station.current_value} m</span><span>{station.trust_score}% trust</span><StatusPill status={station.status} /><ChevronRight size={15} /></button>)}</div>}
+                {(activeTab === 'monitoring' || activeTab === 'devices') && <div className="station-table">{filteredStations.map((station) => <button className={`station-table-row ${station.station_id === selectedStationId ? 'selected' : ''}`} key={station.station_id} onClick={() => setSelectedStationId(station.station_id)}><span><span className={`mini-status ${station.status === 'healthy' ? '' : 'review'}`} /><span><strong>{station.name}</strong><small>{station.station_id} · {station.catchment}</small></span></span><span>{station.current_value} m</span><span>{station.trust_score}% trust</span><StatusPill status={station.status} /><ChevronRight size={15} /></button>)}{!filteredStations.length && <p className="empty-message">{searchQuery.trim() ? 'No stations match your search.' : 'No stations available.'}</p>}</div>}
               </article>
               <aside className="panel station-picker"><div className="panel-heading"><div><h2>Stations</h2><p>Select a live node</p></div></div>{filteredStations.map((station) => <button key={station.station_id} className={`picker-row ${station.station_id === selectedStationId ? 'selected' : ''}`} onClick={() => setSelectedStationId(station.station_id)}><span className={`mini-status ${station.status === 'healthy' ? '' : 'review'}`} /><span><strong>{station.name}</strong><small>{station.station_id}</small></span><ChevronRight size={14} /></button>)}</aside>
             </section>
           )}
-          <footer className="page-footer"><span><span className="status-dot" />Data sync active</span><span>HydroLink SA · Water operations</span><button onClick={() => selectTab('ledger')}><Clock3 size={12} />Last audit <ChevronRight size={12} /></button></footer>
+          <footer className="page-footer"><span><span className={`status-dot ${errorMsg ? 'offline' : ''}`} />{errorMsg ? 'Data sync disconnected' : 'Data sync active'}</span><span>HydroLink SA · Water operations</span><button onClick={() => selectTab('ledger')}><Clock3 size={12} />Last audit <ChevronRight size={12} /></button></footer>
         </div>
       </main>
       {mobileNavOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
@@ -276,8 +301,6 @@ export function LegacyHydroLinkApp() {
   const [farmerLang, setFarmerLang] = useState('Sepedi');
   const [feedbackLog, setFeedbackLog] = useState([]);
   const [feedbackStatus, setFeedbackStatus] = useState(null);
-
-  const API_BASE = 'http://localhost:8000/api';
 
   // 1. Fetch Live Dashboard Data & Alerts on Mount
   useEffect(() => {

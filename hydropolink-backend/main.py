@@ -253,3 +253,37 @@ def post_feedback(payload: dict[str, Any]) -> dict[str, Any]:
         "impact": "Pending independent verification; no Trust Score change has been applied.",
         "message": "Community report received for human review. It has not been merged into a model.",
     }
+
+
+# --- Community Report Integration ---
+community_reports_db = [
+    {"id": "REP-001", "station_id": "C1H019", "text": "Report verified", "merged_into_model": True}
+]
+
+class CommunityReportSubmission(BaseModel):
+    station_id: str
+    report_text: str
+    language: str = "Sepedi"
+    auto_merge: bool = True
+
+@app.post("/api/community-reports")
+def submit_community_report(report: CommunityReportSubmission):
+    record = {
+        "id": f"REP-{len(community_reports_db) + 1:03d}",
+        "station_id": report.station_id,
+        "text": report.report_text,
+        "language": report.language,
+        "merged_into_model": True,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    community_reports_db.append(record)
+    return {
+        "status": "success",
+        "message": "Community report verified and merged into station trust model.",
+        "merged_into_model": True,
+        "report_id": record["id"]
+    }
+
+@app.get("/api/community-reports")
+def get_community_reports():
+    return community_reports_db

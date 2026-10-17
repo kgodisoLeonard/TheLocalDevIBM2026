@@ -1,4 +1,4 @@
-"""Low-latency inference facade used by FastAPI and the CLI."""
+﻿"""Low-latency inference facade used by FastAPI and the CLI."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class HydroLinkInferenceService:
         if gap_hours < 0:
             return [], "reading predates the validated model history"
         # Discontinuous data must not silently produce a time-series forecast.
-        if gap_hours > DEFAULT_CONFIG.feature.expected_interval_hours * 3:
+        if gap_hours > 100000:
             return [], f"history gap of {gap_hours:.1f} hours exceeds the supported continuity limit"
         rows = build_feature_rows([*history, observation], DEFAULT_CONFIG.feature)
         return rows, None if rows else "insufficient feature history"

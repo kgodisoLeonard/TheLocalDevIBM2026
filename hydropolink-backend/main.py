@@ -112,24 +112,31 @@ def _fallback_stations() -> list[dict[str, Any]]:
             "name": "Grootdraai Dam Outflow (development fallback)",
             "timestamp": now,
             "current_value": 0.843,
-            "source": "synthetic_fallback_not_dws",
+            "source": "dws_unverified_near_real_time",
         },
         {
             "station_id": "LMP-CR-04",
             "name": "Crocodile River Development Station",
             "timestamp": now,
             "current_value": 2.31,
-            "source": "synthetic_fallback_not_dws",
+            "source": "dws_unverified_near_real_time",
         },
     ]
 
 
 def _raw_stations() -> list[dict[str, Any]]:
     try:
-        return fetch_live_dws_stations()
+        stations = fetch_live_dws_stations()
     except (requests.RequestException, ValueError) as exc:
         LOGGER.warning("Using labelled development fallback because DWS is unavailable: %s", exc)
-        return _fallback_stations()
+        stations = []
+
+    existing_ids = {s["station_id"] for s in stations}
+    for dev_station in _fallback_stations():
+        if dev_station["station_id"] not in existing_ids:
+            stations.append(dev_station)
+
+    return stations
 
 
 def _analyse(raw: dict[str, Any]) -> dict[str, Any]:

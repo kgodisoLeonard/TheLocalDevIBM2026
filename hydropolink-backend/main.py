@@ -29,20 +29,29 @@ app = FastAPI(
     version="4.0.0",
 )
 
+app.add_middleware(
+CORSMiddleware,
+allow_origins=[
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://148.100.109.101"
+],
+allow_origin_regex=r"^https?://.*$",
+allow_credentials=True,
+allow_methods=["*"],
+allow_headers=["*"],
+)
+
+
 allowed_origins = [
     origin.strip()
     for origin in os.getenv("HYDROLINK_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
     if origin.strip()
 ]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
-)
-
-
 class ForecastModel(BaseModel):
     predicted_level: float | None
     confidence_interval: str

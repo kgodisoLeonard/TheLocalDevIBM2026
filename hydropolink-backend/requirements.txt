@@ -1,9 +1,7 @@
-fastapi>=0.115
-uvicorn>=0.30
-pydantic>=2.8
-requests>=2.32
-beautifulsoup4>=4.12
-numpy>=2.0
-scikit-learn>=1.5
-joblib>=1.4
-httpx>=0.27
+# numpy / scikit-learn / joblib are NOT listed on purpose: they come from the
+# L1CC Jupyter base image so the API unpickles models with the exact same
+# versions the notebook trained them with.
+fastapi
+uvicorn
+requests
+beautifulsoup4

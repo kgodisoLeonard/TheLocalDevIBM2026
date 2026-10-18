@@ -6,7 +6,7 @@ def fetch_live_dws_station_data(station_code: str = "C1H019"):
     Scrapes real-time stage heights and flow/capacity percentages 
     directly from the DWS unverified hydrological tables.
     """
-    url = "https://www.dws.gov.z​a/Hydrology/Unverified"
+    url = "https://www.dws.gov.za/Hydrology/Unverified"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }

@@ -1,7 +1,7 @@
+# numpy / scikit-learn / joblib are NOT listed on purpose: they come from the
+# L1CC Jupyter base image so the API unpickles models with the exact same
+# versions the notebook trained them with.
 fastapi
 uvicorn
-pydantic
 requests
 beautifulsoup4
-numpy
-scikit-learn
